@@ -172,12 +172,15 @@ public class Config
 
     // Defensive settings for protecting Cassandra from true network partitions. See (CASSANDRA-14358) for details.
     // The amount of time to wait for internode tcp connections to establish.
-    public int internode_tcp_connect_timeout_in_ms = 2000;
+    public volatile int internode_tcp_connect_timeout_in_ms = 2000;
     // The amount of time unacknowledged data is allowed on a connection before we throw out the connection
     // Note this is only supported on Linux + epoll, and it appears to behave oddly above a setting of 30000
     // (it takes much longer than 30s) as of Linux 4.12. If you want something that high set this to 0
     // (which picks up the OS default) and configure the net.ipv4.tcp_retries2 sysctl to be ~8.
-    public int internode_tcp_user_timeout_in_ms = 30000;
+    public volatile int internode_tcp_user_timeout_in_ms = 30000;
+    // Similar to internode_tcp_user_timeout_in_ms but used specifically for streaming connection.
+    // The default is 5 minutes. Increase it or set it to 0 in order to increase the timeout.
+    public volatile int internode_streaming_tcp_user_timeout_in_ms = 300_000; // 5 minutes
 
     public boolean start_native_transport = true;
     public int native_transport_port = 9042;
@@ -188,12 +191,12 @@ public class Config
     public volatile long native_transport_max_concurrent_connections_per_ip = -1L;
     public boolean native_transport_flush_in_batches_legacy = false;
     public volatile boolean native_transport_allow_older_protocols = true;
-    public int native_transport_frame_block_size_in_kb = 32;
     public volatile long native_transport_max_concurrent_requests_in_bytes_per_ip = -1L;
     public volatile long native_transport_max_concurrent_requests_in_bytes = -1L;
+    public int native_transport_receive_queue_capacity_in_bytes = 1 << 20; // 1MiB
+
     @Deprecated
     public Integer native_transport_max_negotiable_protocol_version = null;
-
 
     /**
      * Max size of values in SSTables, in MegaBytes.
@@ -533,6 +536,11 @@ public class Config
 
     public boolean autocompaction_on_startup_enabled = Boolean.parseBoolean(System.getProperty("cassandra.autocompaction_on_startup_enabled", "true"));
 
+    // see CASSANDRA-3200 / CASSANDRA-16274
+    public volatile boolean auto_optimise_inc_repair_streams = false;
+    public volatile boolean auto_optimise_full_repair_streams = false;
+    public volatile boolean auto_optimise_preview_repair_streams = false;
+
     /**
      * Client mode means that the process is a pure client, that uses C* code base but does
      * not read or write local C* database files.
@@ -544,6 +552,9 @@ public class Config
     {
         isClientMode = clientMode;
     }
+
+    public volatile int table_count_warn_threshold = 150;
+    public volatile int keyspace_count_warn_threshold = 40;
 
     public static Supplier<Config> getOverrideLoadConfig()
     {

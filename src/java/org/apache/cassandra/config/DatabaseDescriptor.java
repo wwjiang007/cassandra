@@ -360,7 +360,7 @@ public class DatabaseDescriptor
 
         applyEncryptionContext();
 
-        applySslContextHotReload();
+        applySslContext();
     }
 
     private static void applySimpleConfig()
@@ -513,9 +513,6 @@ public class DatabaseDescriptor
 
         checkValidForByteConversion(conf.batch_size_warn_threshold_in_kb,
                                     "batch_size_warn_threshold_in_kb", ByteUnit.KIBI_BYTES);
-
-        checkValidForByteConversion(conf.native_transport_frame_block_size_in_kb,
-                                    "native_transport_frame_block_size_in_kb", ByteUnit.KIBI_BYTES);
 
         if (conf.native_transport_max_negotiable_protocol_version != null)
             logger.warn("The configuration option native_transport_max_negotiable_protocol_version has been deprecated " +
@@ -991,15 +988,17 @@ public class DatabaseDescriptor
         encryptionContext = new EncryptionContext(conf.transparent_data_encryption_options);
     }
 
-    public static void applySslContextHotReload()
+    public static void applySslContext()
     {
         try
         {
+            SSLFactory.validateSslContext("Internode messaging", conf.server_encryption_options, true, true);
+            SSLFactory.validateSslContext("Native transport", conf.client_encryption_options, conf.client_encryption_options.require_client_auth, true);
             SSLFactory.initHotReloading(conf.server_encryption_options, conf.client_encryption_options, false);
         }
-        catch(IOException e)
+        catch (IOException e)
         {
-            throw new ConfigurationException("Failed to initialize SSL hot reloading", e);
+            throw new ConfigurationException("Failed to initialize SSL", e);
         }
     }
 
@@ -2100,6 +2099,16 @@ public class DatabaseDescriptor
         conf.internode_tcp_user_timeout_in_ms = value;
     }
 
+    public static int getInternodeStreamingTcpUserTimeoutInMS()
+    {
+        return conf.internode_streaming_tcp_user_timeout_in_ms;
+    }
+
+    public static void setInternodeStreamingTcpUserTimeoutInMS(int value)
+    {
+        conf.internode_streaming_tcp_user_timeout_in_ms = value;
+    }
+
     public static int getInternodeMaxMessageSizeInBytes()
     {
         return conf.internode_max_message_size_in_bytes;
@@ -2192,11 +2201,6 @@ public class DatabaseDescriptor
         conf.native_transport_allow_older_protocols = isEnabled;
     }
 
-    public static int getNativeTransportFrameBlockSize()
-    {
-        return (int) ByteUnit.KIBI_BYTES.toBytes(conf.native_transport_frame_block_size_in_kb);
-    }
-
     public static double getCommitLogSyncGroupWindow()
     {
         return conf.commitlog_sync_group_window_in_ms;
@@ -2205,6 +2209,16 @@ public class DatabaseDescriptor
     public static void setCommitLogSyncGroupWindow(double windowMillis)
     {
         conf.commitlog_sync_group_window_in_ms = windowMillis;
+    }
+
+    public static int getNativeTransportReceiveQueueCapacityInBytes()
+    {
+        return conf.native_transport_receive_queue_capacity_in_bytes;
+    }
+
+    public static void setNativeTransportReceiveQueueCapacityInBytes(int queueSize)
+    {
+        conf.native_transport_receive_queue_capacity_in_bytes = queueSize;
     }
 
     public static long getNativeTransportMaxConcurrentRequestsInBytesPerIp()
@@ -3222,4 +3236,62 @@ public class DatabaseDescriptor
     {
         return conf.autocompaction_on_startup_enabled;
     }
+
+    public static boolean autoOptimiseIncRepairStreams()
+    {
+        return conf.auto_optimise_inc_repair_streams;
+    }
+
+    public static void setAutoOptimiseIncRepairStreams(boolean enabled)
+    {
+        if (enabled != conf.auto_optimise_inc_repair_streams)
+            logger.info("Changing auto_optimise_inc_repair_streams from {} to {}", conf.auto_optimise_inc_repair_streams, enabled);
+        conf.auto_optimise_inc_repair_streams = enabled;
+    }
+
+    public static boolean autoOptimiseFullRepairStreams()
+    {
+        return conf.auto_optimise_full_repair_streams;
+    }
+
+    public static void setAutoOptimiseFullRepairStreams(boolean enabled)
+    {
+        if (enabled != conf.auto_optimise_full_repair_streams)
+            logger.info("Changing auto_optimise_full_repair_streams from {} to {}", conf.auto_optimise_full_repair_streams, enabled);
+        conf.auto_optimise_full_repair_streams = enabled;
+    }
+
+    public static boolean autoOptimisePreviewRepairStreams()
+    {
+        return conf.auto_optimise_preview_repair_streams;
+    }
+
+    public static void setAutoOptimisePreviewRepairStreams(boolean enabled)
+    {
+        if (enabled != conf.auto_optimise_preview_repair_streams)
+            logger.info("Changing auto_optimise_preview_repair_streams from {} to {}", conf.auto_optimise_preview_repair_streams, enabled);
+        conf.auto_optimise_preview_repair_streams = enabled;
+    }
+
+    public static int tableCountWarnThreshold()
+    {
+        return conf.table_count_warn_threshold;
+    }
+
+    public static void setTableCountWarnThreshold(int value)
+    {
+        conf.table_count_warn_threshold = value;
+    }
+
+    public static int keyspaceCountWarnThreshold()
+    {
+        return conf.keyspace_count_warn_threshold;
+    }
+
+    public static void setKeyspaceCountWarnThreshold(int value)
+    {
+        conf.keyspace_count_warn_threshold = value;
+    }
+
+
 }

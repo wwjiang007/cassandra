@@ -2,7 +2,7 @@ version: 2
 jobs:
   j8_jvm_upgrade_dtests:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -93,7 +93,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j8_cqlsh-dtests-py2-with-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -143,7 +143,7 @@ jobs:
           mkdir -p /tmp/results/dtests
           # we need the "set -o pipefail" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee
           export SPLIT_TESTS=`cat /tmp/split_dtest_tests_j8_with_vnodes_final.txt`
-          set -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j8_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
+          set -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=16 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j8_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
     - store_test_results:
         path: /tmp/results
     - store_artifacts:
@@ -170,7 +170,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j11_unit_tests:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11:20201130
     resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -262,7 +262,7 @@ jobs:
     - CASSANDRA_USE_JDK11: true
   j8_cqlsh-dtests-py38-no-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -339,7 +339,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j11_cqlsh-dtests-py3-with-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -389,7 +389,7 @@ jobs:
           mkdir -p /tmp/results/dtests
           # we need the "set -o pipefail" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee
           export SPLIT_TESTS=`cat /tmp/split_dtest_tests_j11_with_vnodes_final.txt`
-          set -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j11_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
+          set -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=16 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j11_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
     - store_test_results:
         path: /tmp/results
     - store_artifacts:
@@ -417,7 +417,7 @@ jobs:
     - CASSANDRA_USE_JDK11: true
   j11_cqlsh-dtests-py3-no-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -495,7 +495,7 @@ jobs:
     - CASSANDRA_USE_JDK11: true
   j11_cqlsh-dtests-py38-with-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -545,7 +545,7 @@ jobs:
           mkdir -p /tmp/results/dtests
           # we need the "set -o pipefail" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee
           export SPLIT_TESTS=`cat /tmp/split_dtest_tests_j11_with_vnodes_final.txt`
-          set -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j11_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
+          set -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=16 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j11_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
     - store_test_results:
         path: /tmp/results
     - store_artifacts:
@@ -573,7 +573,7 @@ jobs:
     - CASSANDRA_USE_JDK11: true
   j8_cqlsh-dtests-py3-with-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -623,7 +623,7 @@ jobs:
           mkdir -p /tmp/results/dtests
           # we need the "set -o pipefail" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee
           export SPLIT_TESTS=`cat /tmp/split_dtest_tests_j8_with_vnodes_final.txt`
-          set -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j8_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
+          set -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=16 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j8_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
     - store_test_results:
         path: /tmp/results
     - store_artifacts:
@@ -650,7 +650,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j8_cqlsh-dtests-py2-no-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -727,7 +727,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j11_cqlsh-dtests-py2-with-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -777,7 +777,7 @@ jobs:
           mkdir -p /tmp/results/dtests
           # we need the "set -o pipefail" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee
           export SPLIT_TESTS=`cat /tmp/split_dtest_tests_j11_with_vnodes_final.txt`
-          set -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j11_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
+          set -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=16 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j11_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
     - store_test_results:
         path: /tmp/results
     - store_artifacts:
@@ -805,7 +805,7 @@ jobs:
     - CASSANDRA_USE_JDK11: true
   j11_dtests-with-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -858,7 +858,7 @@ jobs:
     - run:
         name: Run dtests (j11_with_vnodes)
         no_output_timeout: 15m
-        command: "echo \"cat /tmp/split_dtest_tests_j11_with_vnodes_final.txt\"\ncat /tmp/split_dtest_tests_j11_with_vnodes_final.txt\n\nsource ~/env3.6/bin/activate\nexport PATH=$JAVA_HOME/bin:$PATH\nif [ -n '' ]; then\n  export \nfi\n\njava -version\ncd ~/cassandra-dtest\nmkdir -p /tmp/dtest\n\necho \"env: $(env)\"\necho \"** done env\"\nmkdir -p /tmp/results/dtests\n# we need the \"set -o pipefail\" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee\nexport SPLIT_TESTS=`cat /tmp/split_dtest_tests_j11_with_vnodes_final.txt`\nset -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j11_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt\n"
+        command: "echo \"cat /tmp/split_dtest_tests_j11_with_vnodes_final.txt\"\ncat /tmp/split_dtest_tests_j11_with_vnodes_final.txt\n\nsource ~/env3.6/bin/activate\nexport PATH=$JAVA_HOME/bin:$PATH\nif [ -n '' ]; then\n  export \nfi\n\njava -version\ncd ~/cassandra-dtest\nmkdir -p /tmp/dtest\n\necho \"env: $(env)\"\necho \"** done env\"\nmkdir -p /tmp/results/dtests\n# we need the \"set -o pipefail\" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee\nexport SPLIT_TESTS=`cat /tmp/split_dtest_tests_j11_with_vnodes_final.txt`\nset -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=16 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j11_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt\n"
     - store_test_results:
         path: /tmp/results
     - store_artifacts:
@@ -886,7 +886,7 @@ jobs:
     - CASSANDRA_USE_JDK11: true
   j8_dtests-no-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -944,7 +944,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j8_upgradetests-no-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: xlarge
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -971,52 +971,11 @@ jobs:
     - run:
         name: Determine Tests to Run (j8_upgradetests_without_vnodes)
         no_output_timeout: 5m
-        command: |
-          # reminder: this code (along with all the steps) is independently executed on every circle container
-          # so the goal here is to get the circleci script to return the tests *this* container will run
-          # which we do via the `circleci` cli tool.
-
-          cd cassandra-dtest
-          source ~/env3.6/bin/activate
-          export PATH=$JAVA_HOME/bin:$PATH
-
-          if [ -n 'RUN_STATIC_UPGRADE_MATRIX=true' ]; then
-            export RUN_STATIC_UPGRADE_MATRIX=true
-          fi
-
-          echo "***Collected DTests (j8_upgradetests_without_vnodes)***"
-          set -eo pipefail && ./run_dtests.py --execute-upgrade-tests --dtest-print-tests-only --dtest-print-tests-output=/tmp/all_dtest_tests_j8_upgradetests_without_vnodes_raw --cassandra-dir=../cassandra
-          if [ -z '^upgrade_tests' ]; then
-            mv /tmp/all_dtest_tests_j8_upgradetests_without_vnodes_raw /tmp/all_dtest_tests_j8_upgradetests_without_vnodes
-          else
-            grep -e '^upgrade_tests' /tmp/all_dtest_tests_j8_upgradetests_without_vnodes_raw > /tmp/all_dtest_tests_j8_upgradetests_without_vnodes || { echo "Filter did not match any tests! Exiting build."; exit 0; }
-          fi
-          set -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_tests_j8_upgradetests_without_vnodes > /tmp/split_dtest_tests_j8_upgradetests_without_vnodes.txt
-          cat /tmp/split_dtest_tests_j8_upgradetests_without_vnodes.txt | tr '\n' ' ' > /tmp/split_dtest_tests_j8_upgradetests_without_vnodes_final.txt
-          cat /tmp/split_dtest_tests_j8_upgradetests_without_vnodes_final.txt
+        command: "# reminder: this code (along with all the steps) is independently executed on every circle container\n# so the goal here is to get the circleci script to return the tests *this* container will run\n# which we do via the `circleci` cli tool.\n\ncd cassandra-dtest\nsource ~/env3.6/bin/activate\nexport PATH=$JAVA_HOME/bin:$PATH\n\nif [ -n '' ]; then\n  export \nfi\n\necho \"***Collected DTests (j8_upgradetests_without_vnodes)***\"\nset -eo pipefail && ./run_dtests.py --execute-upgrade-tests-only --upgrade-target-version-only --upgrade-version-selection all --dtest-print-tests-only --dtest-print-tests-output=/tmp/all_dtest_tests_j8_upgradetests_without_vnodes_raw --cassandra-dir=../cassandra\nif [ -z '' ]; then\n  mv /tmp/all_dtest_tests_j8_upgradetests_without_vnodes_raw /tmp/all_dtest_tests_j8_upgradetests_without_vnodes\nelse\n  grep -e '' /tmp/all_dtest_tests_j8_upgradetests_without_vnodes_raw > /tmp/all_dtest_tests_j8_upgradetests_without_vnodes || { echo \"Filter did not match any tests! Exiting build.\"; exit 0; }\nfi\nset -eo pipefail && circleci tests split --split-by=timings --timings-type=classname /tmp/all_dtest_tests_j8_upgradetests_without_vnodes > /tmp/split_dtest_tests_j8_upgradetests_without_vnodes.txt\ncat /tmp/split_dtest_tests_j8_upgradetests_without_vnodes.txt | tr '\\n' ' ' > /tmp/split_dtest_tests_j8_upgradetests_without_vnodes_final.txt\ncat /tmp/split_dtest_tests_j8_upgradetests_without_vnodes_final.txt\n"
     - run:
         name: Run dtests (j8_upgradetests_without_vnodes)
         no_output_timeout: 15m
-        command: |
-          echo "cat /tmp/split_dtest_tests_j8_upgradetests_without_vnodes_final.txt"
-          cat /tmp/split_dtest_tests_j8_upgradetests_without_vnodes_final.txt
-
-          source ~/env3.6/bin/activate
-          export PATH=$JAVA_HOME/bin:$PATH
-          if [ -n 'RUN_STATIC_UPGRADE_MATRIX=true' ]; then
-            export RUN_STATIC_UPGRADE_MATRIX=true
-          fi
-
-          java -version
-          cd ~/cassandra-dtest
-          mkdir -p /tmp/dtest
-
-          echo "env: $(env)"
-          echo "** done env"
-          mkdir -p /tmp/results/dtests
-          # we need the "set -o pipefail" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee
-          export SPLIT_TESTS=`cat /tmp/split_dtest_tests_j8_upgradetests_without_vnodes_final.txt`
-          set -o pipefail && cd ~/cassandra-dtest && pytest --execute-upgrade-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j8_upgradetests_without_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
+        command: "echo \"cat /tmp/split_dtest_tests_j8_upgradetests_without_vnodes_final.txt\"\ncat /tmp/split_dtest_tests_j8_upgradetests_without_vnodes_final.txt\n\nsource ~/env3.6/bin/activate\nexport PATH=$JAVA_HOME/bin:$PATH\nif [ -n '' ]; then\n  export \nfi\n\njava -version\ncd ~/cassandra-dtest\nmkdir -p /tmp/dtest\n\necho \"env: $(env)\"\necho \"** done env\"\nmkdir -p /tmp/results/dtests\n# we need the \"set -o pipefail\" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee\nexport SPLIT_TESTS=`cat /tmp/split_dtest_tests_j8_upgradetests_without_vnodes_final.txt`\nset -o pipefail && cd ~/cassandra-dtest && pytest --execute-upgrade-tests-only --upgrade-target-version-only --upgrade-version-selection all --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j8_upgradetests_without_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt\n"
     - store_test_results:
         path: /tmp/results
     - store_artifacts:
@@ -1043,7 +1002,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   utests_stress:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1088,7 +1047,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j8_unit_tests:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1179,7 +1138,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j11_jvm_dtests:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11:20201130
     resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1271,7 +1230,7 @@ jobs:
     - CASSANDRA_USE_JDK11: true
   j11_build:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11:20201130
     resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1352,7 +1311,7 @@ jobs:
     - CASSANDRA_USE_JDK11: true
   j11_cqlsh-dtests-py2-no-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1430,7 +1389,7 @@ jobs:
     - CASSANDRA_USE_JDK11: true
   j11_cqlshlib_tests:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11:20201130
     resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1467,7 +1426,7 @@ jobs:
     - CASSANDRA_USE_JDK11: true
   j8_dtests-with-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1498,7 +1457,7 @@ jobs:
     - run:
         name: Run dtests (j8_with_vnodes)
         no_output_timeout: 15m
-        command: "echo \"cat /tmp/split_dtest_tests_j8_with_vnodes_final.txt\"\ncat /tmp/split_dtest_tests_j8_with_vnodes_final.txt\n\nsource ~/env3.6/bin/activate\nexport PATH=$JAVA_HOME/bin:$PATH\nif [ -n '' ]; then\n  export \nfi\n\njava -version\ncd ~/cassandra-dtest\nmkdir -p /tmp/dtest\n\necho \"env: $(env)\"\necho \"** done env\"\nmkdir -p /tmp/results/dtests\n# we need the \"set -o pipefail\" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee\nexport SPLIT_TESTS=`cat /tmp/split_dtest_tests_j8_with_vnodes_final.txt`\nset -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j8_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt\n"
+        command: "echo \"cat /tmp/split_dtest_tests_j8_with_vnodes_final.txt\"\ncat /tmp/split_dtest_tests_j8_with_vnodes_final.txt\n\nsource ~/env3.6/bin/activate\nexport PATH=$JAVA_HOME/bin:$PATH\nif [ -n '' ]; then\n  export \nfi\n\njava -version\ncd ~/cassandra-dtest\nmkdir -p /tmp/dtest\n\necho \"env: $(env)\"\necho \"** done env\"\nmkdir -p /tmp/results/dtests\n# we need the \"set -o pipefail\" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee\nexport SPLIT_TESTS=`cat /tmp/split_dtest_tests_j8_with_vnodes_final.txt`\nset -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=16 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j8_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt\n"
     - store_test_results:
         path: /tmp/results
     - store_artifacts:
@@ -1525,7 +1484,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j11_cqlsh-dtests-py38-no-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1603,7 +1562,7 @@ jobs:
     - CASSANDRA_USE_JDK11: true
   j8_jvm_dtests:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1694,7 +1653,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j8_build:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1774,7 +1733,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j8_cqlsh-dtests-py3-no-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1851,7 +1810,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j8_cqlsh-dtests-py38-with-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1901,7 +1860,7 @@ jobs:
           mkdir -p /tmp/results/dtests
           # we need the "set -o pipefail" here so that the exit code that circleci will actually use is from pytest and not the exit code from tee
           export SPLIT_TESTS=`cat /tmp/split_dtest_tests_j8_with_vnodes_final.txt`
-          set -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=32 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j8_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
+          set -o pipefail && cd ~/cassandra-dtest && pytest --use-vnodes --num-tokens=16 --skip-resource-intensive-tests --log-cli-level=DEBUG --junit-xml=/tmp/results/dtests/pytest_result_j8_with_vnodes.xml -s --cassandra-dir=/home/cassandra/cassandra --keep-test-dir $SPLIT_TESTS 2>&1 | tee /tmp/dtest/stdout.txt
     - store_test_results:
         path: /tmp/results
     - store_artifacts:
@@ -1928,7 +1887,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   utests_long:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -1973,7 +1932,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j8_cqlshlib_tests:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -2009,7 +1968,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   utests_fqltool:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -2054,7 +2013,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j11_dtests-no-vnodes:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11:20201130
     resource_class: large
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -2135,7 +2094,7 @@ jobs:
     - CASSANDRA_USE_JDK11: true
   utests_compression:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
@@ -2226,7 +2185,7 @@ jobs:
     - JDK_HOME: /usr/lib/jvm/java-8-openjdk-amd64
   j8_dtest_jars_build:
     docker:
-    - image: nastra/cassandra-testing-ubuntu1910-java11-w-dependencies:20200603
+    - image: beobal/cassandra-testing-ubuntu1910-java11-w-dependencies:20201130
     resource_class: medium
     working_directory: ~/
     shell: /bin/bash -eo pipefail -l
