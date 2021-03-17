@@ -24,6 +24,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
 import java.security.Permission;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -44,6 +45,7 @@ import javax.management.NotificationListener;
 import com.google.common.annotations.VisibleForTesting;
 
 import io.netty.util.concurrent.GlobalEventExecutor;
+import org.apache.cassandra.batchlog.Batch;
 import org.apache.cassandra.batchlog.BatchlogManager;
 import org.apache.cassandra.concurrent.ExecutorLocals;
 import org.apache.cassandra.concurrent.ScheduledExecutors;
@@ -59,7 +61,6 @@ import org.apache.cassandra.cql3.QueryProcessor;
 import org.apache.cassandra.db.ColumnFamilyStore;
 import org.apache.cassandra.db.Keyspace;
 import org.apache.cassandra.db.Memtable;
-import org.apache.cassandra.db.ReadResponse;
 import org.apache.cassandra.db.SystemKeyspace;
 import org.apache.cassandra.db.SystemKeyspaceMigrator40;
 import org.apache.cassandra.db.commitlog.CommitLog;
@@ -85,6 +86,7 @@ import org.apache.cassandra.distributed.shared.Metrics;
 import org.apache.cassandra.gms.ApplicationState;
 import org.apache.cassandra.gms.Gossiper;
 import org.apache.cassandra.gms.VersionedValue;
+import org.apache.cassandra.hints.DTestSerializer;
 import org.apache.cassandra.hints.HintsService;
 import org.apache.cassandra.index.SecondaryIndexManager;
 import org.apache.cassandra.io.IVersionedAsymmetricSerializer;
@@ -92,6 +94,7 @@ import org.apache.cassandra.io.sstable.IndexSummaryManager;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.DataOutputBuffer;
+import org.apache.cassandra.io.util.DataOutputPlus;
 import org.apache.cassandra.io.util.FileUtils;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.metrics.CassandraMetricsRegistry;
@@ -125,6 +128,7 @@ import org.apache.cassandra.utils.ExecutorUtils;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.JVMStabilityInspector;
 import org.apache.cassandra.utils.Throwables;
+import org.apache.cassandra.utils.UUIDSerializer;
 import org.apache.cassandra.utils.concurrent.Ref;
 import org.apache.cassandra.utils.progress.jmx.JMXBroadcastExecutor;
 import org.apache.cassandra.utils.memory.BufferPools;
@@ -135,10 +139,12 @@ import static org.apache.cassandra.distributed.api.Feature.NATIVE_PROTOCOL;
 import static org.apache.cassandra.distributed.api.Feature.NETWORK;
 import static org.apache.cassandra.distributed.impl.DistributedTestSnitch.fromCassandraInetAddressAndPort;
 import static org.apache.cassandra.distributed.impl.DistributedTestSnitch.toCassandraInetAddressAndPort;
+import static org.apache.cassandra.net.Verb.BATCH_STORE_REQ;
 
 public class Instance extends IsolatedExecutor implements IInvokableInstance
 {
     public final IInstanceConfig config;
+    private volatile boolean initialized = false;
     private final long startedAt = System.nanoTime();
 
     // should never be invoked directly, so that it is instantiated on other class loader;
@@ -318,17 +324,59 @@ public class Instance extends IsolatedExecutor implements IInvokableInstance
 
         try (DataOutputBuffer out = new DataOutputBuffer(1024))
         {
+            // On a 4.0+ node, C* makes a distinction between "local" and "remote" batches, where only the former can 
+            // be serialized and sent to a remote node, where they are deserialized and written to the batch commitlog
+            // without first being converted into mutation objects. Batch serialization is therfore not symmetric, and
+            // we use a special procedure here that "re-serializes" a "remote" batch to build the message.
+            if (fromVersion >= MessagingService.VERSION_40 && messageOut.verb().id == BATCH_STORE_REQ.id)
+            {
+                Object maybeBatch = messageOut.payload;
+
+                if (maybeBatch instanceof Batch)
+                {
+                    Batch batch = (Batch) maybeBatch;
+
+                    // If the batch is local, it can be serialized along the normal path.
+                    if (!batch.isLocal())
+                    {
+                        reserialize(batch, out, toVersion);
+                        byte[] bytes = out.toByteArray();
+                        return new MessageImpl(messageOut.verb().id, bytes, messageOut.id(), toVersion, fromCassandraInetAddressAndPort(from));
+                    }
+                }
+            }
+            
             Message.serializer.serialize(messageOut, out, toVersion);
             byte[] bytes = out.toByteArray();
             if (messageOut.serializedSize(toVersion) != bytes.length)
                 throw new AssertionError(String.format("Message serializedSize(%s) does not match what was written with serialize(out, %s) for verb %s and serializer %s; " +
-                                                       "expected %s, actual %s", toVersion, toVersion, messageOut.verb(), messageOut.serializer.getClass(),
+                                                       "expected %s, actual %s", toVersion, toVersion, messageOut.verb(), Message.serializer.getClass(),
                                                        messageOut.serializedSize(toVersion), bytes.length));
             return new MessageImpl(messageOut.verb().id, bytes, messageOut.id(), toVersion, fromCassandraInetAddressAndPort(from));
         }
         catch (IOException e)
         {
             throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Only "local" batches can be passed through {@link Batch.Serializer#serialize(Batch, DataOutputPlus, int)} and 
+     * sent to a remote node during normal operation, but there are testing scenarios where we may intercept and 
+     * forward a "remote" batch. This method allows us to put the already encoded mutations back onto a stream.
+     */
+    private static void reserialize(Batch batch, DataOutputPlus out, int version) throws IOException
+    {
+        assert !batch.isLocal() : "attempted to reserialize a 'local' batch";
+
+        UUIDSerializer.serializer.serialize(batch.id, out, version);
+        out.writeLong(batch.creationTime);
+
+        out.writeUnsignedVInt(batch.getEncodedMutations().size());
+
+        for (ByteBuffer mutation : batch.getEncodedMutations())
+        {
+            out.write(mutation);
         }
     }
 
@@ -425,6 +473,7 @@ public class Instance extends IsolatedExecutor implements IInvokableInstance
                 DatabaseDescriptor.daemonInitialization();
                 FileUtils.setFSErrorHandler(new DefaultFSErrorHandler());
                 DatabaseDescriptor.createAllDirectories();
+                CassandraDaemon.getInstanceForTesting().migrateSystemDataIfNeeded();
                 CommitLog.instance.start();
 
                 CassandraDaemon.getInstanceForTesting().runStartupChecks();
@@ -466,7 +515,7 @@ public class Instance extends IsolatedExecutor implements IInvokableInstance
                 // Re-populate token metadata after commit log recover (new peers might be loaded onto system keyspace #10293)
                 StorageService.instance.populateTokenMetadata();
 
-                Verb.REQUEST_RSP.unsafeSetSerializer(() -> ReadResponse.serializer);
+                Verb.HINT_REQ.unsafeSetSerializer(DTestSerializer::new);
 
                 if (config.has(NETWORK))
                 {
@@ -533,6 +582,8 @@ public class Instance extends IsolatedExecutor implements IInvokableInstance
                 throw new RuntimeException(t);
             }
         }).run();
+
+        initialized = true;
     }
 
 
@@ -603,9 +654,7 @@ public class Instance extends IsolatedExecutor implements IInvokableInstance
                 StorageService.instance.onChange(addressAndPort,
                         ApplicationState.STATUS,
                         new VersionedValue.VersionedValueFactory(partitioner).left(Collections.singleton(token), 0L));
-                Gossiper.instance.removeEndpoint(addressAndPort);
             });
-            PendingRangeCalculatorService.instance.blockUntilFinished();
         }
         catch (Throwable e) // UnknownHostException
         {
@@ -699,6 +748,9 @@ public class Instance extends IsolatedExecutor implements IInvokableInstance
     @Override
     public int liveMemberCount()
     {
+        if (!initialized || isShutdown())
+            return 0;
+
         return sync(() -> {
             if (!DatabaseDescriptor.isDaemonInitialized() || !Gossiper.instance.isEnabled())
                 return 0;

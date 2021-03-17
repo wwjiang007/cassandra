@@ -56,7 +56,10 @@ public class OffsetAwareConfigurationLoader extends YamlConfigurationLoader
 
         String sep = File.pathSeparator;
 
+        assert offset < 2000;
         config.native_transport_port += offset;
+        if (config.native_transport_port_ssl != null)
+            config.native_transport_port_ssl += offset;
         config.storage_port += offset;
         config.ssl_storage_port += offset;
 
@@ -93,6 +96,9 @@ public class OffsetAwareConfigurationLoader extends YamlConfigurationLoader
 
         for (int i = 0; i < config.data_file_directories.length; i++)
             config.data_file_directories[i] += sep + offset;
+
+        if (config.local_system_data_file_directory != null)
+            config.local_system_data_file_directory += sep + offset;
 
         return config;
     }

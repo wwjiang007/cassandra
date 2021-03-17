@@ -29,6 +29,7 @@ import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.locator.IEndpointSnitch;
 import org.apache.cassandra.locator.InetAddressAndPort;
+import org.apache.cassandra.security.SSLFactory;
 
 public class EncryptionOptions
 {
@@ -236,10 +237,9 @@ public class EncryptionOptions
     }
 
     /* This list is substituted in configurations that have explicitly specified the original "TLS" default,
-     * it is not a 'default' list or 'support protocol versions' list.  It is just an attempt to preserve the
-     * original intent for the user configuration
+     * by extracting it from the default "TLS" SSL Context instance
      */
-    private final List<String> TLS_PROTOCOL_SUBSTITUTION = ImmutableList.of("TLSv1.3", "TLSv1.2", "TLSv1.1", "TLSv1");
+    static private final List<String> TLS_PROTOCOL_SUBSTITUTION = SSLFactory.tlsInstanceProtocolSubstitution();
 
     /**
      * Combine the pre-4.0 protocol field with the accepted_protocols list, substituting a list of
@@ -513,6 +513,15 @@ public class EncryptionOptions
                 logger.warn("Setting server_encryption_options.enabled has no effect, use internode_encryption");
             }
 
+            if (require_client_auth && (internode_encryption == InternodeEncryption.rack || internode_encryption == InternodeEncryption.dc))
+            {
+                logger.warn("Setting require_client_auth is incompatible with 'rack' and 'dc' internode_encryption values."
+                          + " It is possible for an internode connection to pretend to be in the same rack/dc by spoofing"
+                          + " its broadcast address in the handshake and bypass authentication. To ensure that mutual TLS"
+                          + " authentication is not bypassed, please set internode_encryption to 'all'. Continuing with"
+                          + " insecure configuration.");
+            }
+
             // regardless of the optional flag, if the internode encryption is set to rack or dc
             // it must be optional so that unencrypted connections within the rack or dc can be established.
             isOptional = super.isOptional || internode_encryption == InternodeEncryption.rack || internode_encryption == InternodeEncryption.dc;
@@ -543,6 +552,15 @@ public class EncryptionOptions
             return true;
         }
 
+        /**
+         * {@link #isOptional} will be set to {@code true} implicitly for {@code internode_encryption}
+         * values of "dc" and "all". This method returns the explicit, raw value of {@link #optional}
+         * as set by the user (if set at all).
+         */
+        public boolean isExplicitlyOptional()
+        {
+            return optional != null && optional;
+        }
 
         public ServerEncryptionOptions withKeyStore(String keystore)
         {

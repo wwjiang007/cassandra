@@ -1,5 +1,4 @@
-#!/bin/sh
-# -*- mode: Python -*-
+#!/usr/bin/python3
 
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
@@ -17,20 +16,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""":"
-# bash code here; finds a suitable python interpreter and execs this file.
-# this implementation of cqlsh is compatible with both Python 3 and Python 2.7.
-# prefer unqualified "python" if suitable:
-python -c 'import sys; sys.exit(not (0x020700b0 < sys.hexversion))' 2>/dev/null \
-    && exec python "$0" "$@"
-for pyver in 3 2.7; do
-    which python$pyver > /dev/null 2>&1 && exec python$pyver "$0" "$@"
-done
-echo "No appropriate python interpreter found." >&2
-exit 1
-":"""
-
-from __future__ import division, unicode_literals
+from __future__ import division, unicode_literals, print_function
 
 import cmd
 import codecs
@@ -48,8 +34,8 @@ from contextlib import contextmanager
 from glob import glob
 from uuid import UUID
 
-if sys.version_info.major != 3 and (sys.version_info.major == 2 and sys.version_info.minor != 7):
-    sys.exit("\nCQL Shell supports only Python 3 or Python 2.7\n")
+if sys.version_info < (3, 6) and sys.version_info[0:2] != (2, 7):
+    sys.exit("\ncqlsh requires Python 3.6+ or Python 2.7 (deprecated)\n")
 
 # see CASSANDRA-10428
 if platform.python_implementation().startswith('Jython'):
@@ -59,7 +45,7 @@ UTF8 = 'utf-8'
 CP65001 = 'cp65001'  # Win utf-8 variant
 
 description = "CQL Shell for Apache Cassandra"
-version = "5.0.1"
+version = "6.0.0"
 
 readline = None
 try:
@@ -215,7 +201,7 @@ parser.add_option("-C", "--color", action='store_true', dest='color',
 parser.add_option("--no-color", action='store_false', dest='color',
                   help='Never use color output')
 parser.add_option("--browser", dest='browser', help="""The browser to use to display CQL help, where BROWSER can be:
-                                                    - one of the supported browsers in https://docs.python.org/2/library/webbrowser.html.
+                                                    - one of the supported browsers in https://docs.python.org/3/library/webbrowser.html.
                                                     - browser path followed by %s, example: /usr/bin/google-chrome-stable %s""")
 parser.add_option('--ssl', action='store_true', help='Use SSL', default=False)
 parser.add_option("-u", "--username", help="Authenticate as user.")
@@ -475,8 +461,6 @@ class Shell(cmd.Cmd):
             kwargs = {}
             if protocol_version is not None:
                 kwargs['protocol_version'] = protocol_version
-            else:
-                kwargs['protocol_version'] = 4
             self.conn = Cluster(contact_points=(self.hostname,), port=self.port, cql_version=cqlver,
                                 auth_provider=self.auth_provider,
                                 ssl_options=sslhandling.ssl_settings(hostname, CONFIG_FILE) if ssl else None,
@@ -532,6 +516,7 @@ class Shell(cmd.Cmd):
 
         if tty:
             self.reset_prompt()
+            self.maybe_warn_py2()
             self.report_connection()
             print('Use HELP for help.')
         else:
@@ -605,7 +590,7 @@ class Shell(cmd.Cmd):
         self.show_version()
 
     def show_host(self):
-        print("Connected to {0} at {1}:{2}."
+        print("Connected to {0} at {1}:{2}"
               .format(self.applycolor(self.get_cluster_name(), BLUE),
                       self.hostname,
                       self.port))
@@ -617,6 +602,12 @@ class Shell(cmd.Cmd):
         # set_cql_version.
         vers['cql'] = self.cql_version
         print("[cqlsh %(shver)s | Cassandra %(build)s | CQL spec %(cql)s | Native protocol v%(protocol)s]" % vers)
+
+    def maybe_warn_py2(self):
+        py2_suppress_warn = 'CQLSH_NO_WARN_PY2'
+        if sys.version_info[0:2] == (2, 7) and not os.environ.get(py2_suppress_warn):
+            print("Python 2.7 support is deprecated. "
+                  "Install Python 3.6+ or set %s to suppress this message.\n" % (py2_suppress_warn,))
 
     def show_session(self, sessionid, partial_session=False):
         print_trace_session(self, self.session, sessionid, partial_session)

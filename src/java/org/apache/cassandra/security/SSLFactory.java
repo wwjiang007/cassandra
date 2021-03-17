@@ -34,6 +34,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
@@ -161,6 +162,26 @@ public final class SSLFactory
         }
     }
 
+    /** Provides the list of protocols that would have been supported if "TLS" was selected as the
+     * protocol before the change for CASSANDRA-13325 that expects explicit protocol versions.
+     * @return list of enabled protocol names
+     */
+    public static List<String> tlsInstanceProtocolSubstitution()
+    {
+        try
+        {
+            SSLContext ctx = SSLContext.getInstance("TLS");
+            ctx.init(null, null, null);
+            SSLParameters params = ctx.getDefaultSSLParameters();
+            String[] protocols = params.getProtocols();
+            return Arrays.asList(protocols);
+        }
+        catch (Exception e)
+        {
+            throw new RuntimeException("Error finding supported TLS Protocols", e);
+        }
+    }
+
     /**
      * Create a JSSE {@link SSLContext}.
      */
@@ -175,7 +196,6 @@ public final class SSLFactory
         try
         {
             SSLContext ctx = SSLContext.getInstance("TLS");
-            ctx.getDefaultSSLParameters().setProtocols(options.acceptedProtocolsArray());
             ctx.init(kmf.getKeyManagers(), trustManagers, null);
             return ctx;
         }
@@ -460,6 +480,11 @@ public final class SSLFactory
         }
     }
 
+    private static boolean filterOutSSLv2Hello(String string)
+    {
+        return !string.equals("SSLv2Hello");
+    }
+
     public static void validateSslContext(String contextDescription, EncryptionOptions options, boolean buildTrustStore, boolean logProtocolAndCiphers) throws IOException
     {
         if (options != null && options.tlsEncryptionPolicy() != EncryptionOptions.TlsEncryptionPolicy.UNENCRYPTED)
@@ -478,13 +503,22 @@ public final class SSLFactory
                         {
                             String[] supportedProtocols = engine.getSupportedProtocols();
                             String[] supportedCiphers = engine.getSupportedCipherSuites();
+                            // Netty always adds the SSLv2Hello pseudo-protocol.  (Netty commit 7a39afd031accea9ee38653afbd58eb1c466deda)
+                            // To avoid triggering any log scanners that are concerned about SSL2 references, filter
+                            // it from the output.
                             String[] enabledProtocols = engine.getEnabledProtocols();
+                            String filteredEnabledProtocols =
+                                supportedProtocols == null ? "system default"
+                                                           : Arrays.stream(engine.getEnabledProtocols())
+                                                            .filter(SSLFactory::filterOutSSLv2Hello)
+                                                            .collect(Collectors.joining(", "));
                             String[] enabledCiphers = engine.getEnabledCipherSuites();
 
                             logger.debug("{} supported TLS protocols: {}", contextDescription,
                                          supportedProtocols == null ? "system default" : String.join(", ", supportedProtocols));
-                            logger.info("{} enabled TLS protocols: {}", contextDescription,
+                            logger.debug("{} unfiltered enabled TLS protocols: {}", contextDescription,
                                         enabledProtocols == null ? "system default" : String.join(", ", enabledProtocols));
+                            logger.info("{} enabled TLS protocols: {}", contextDescription, filteredEnabledProtocols);
                             logger.debug("{} supported cipher suites: {}", contextDescription,
                                          supportedCiphers == null ? "system default" : String.join(", ", supportedCiphers));
                             logger.info("{} enabled cipher suites: {}", contextDescription,

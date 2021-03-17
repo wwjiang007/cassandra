@@ -29,7 +29,6 @@ import java.nio.ByteBuffer;
 import java.rmi.server.RMISocketFactory;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -89,6 +88,8 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.JMXServerUtils;
 
+import static com.datastax.driver.core.SocketOptions.DEFAULT_CONNECT_TIMEOUT_MILLIS;
+import static com.datastax.driver.core.SocketOptions.DEFAULT_READ_TIMEOUT_MILLIS;
 import static junit.framework.Assert.assertNotNull;
 
 /**
@@ -421,10 +422,15 @@ public abstract class CQLTester
         VirtualKeyspaceRegistry.instance.register(VirtualSchemaKeyspace.instance);
         StorageService.instance.initServer();
         SchemaLoader.startGossiper();
-        initializeNetwork(decorator);
+        initializeNetwork(decorator, null);
     }
 
     protected static void reinitializeNetwork()
+    {
+        reinitializeNetwork(null);
+    }
+
+    protected static void reinitializeNetwork(Consumer<Cluster.Builder> clusterConfigurator)
     {
         if (server != null && server.isRunning())
         {
@@ -440,10 +446,10 @@ public abstract class CQLTester
         clusters.clear();
         sessions.clear();
 
-        initializeNetwork(server -> {});
+        initializeNetwork(server -> {}, clusterConfigurator);
     }
 
-    private static void initializeNetwork(Consumer<Server.Builder> decorator)
+    private static void initializeNetwork(Consumer<Server.Builder> decorator, Consumer<Cluster.Builder> clusterConfigurator)
     {
         Server.Builder serverBuilder = new Server.Builder().withHost(nativeAddr).withPort(nativePort);
         decorator.accept(serverBuilder);
@@ -456,11 +462,21 @@ public abstract class CQLTester
             if (clusters.containsKey(version))
                 continue;
 
+            SocketOptions socketOptions = new SocketOptions()
+                                          .setConnectTimeoutMillis(Integer.getInteger("cassandra.test.driver.connection_timeout_ms", DEFAULT_CONNECT_TIMEOUT_MILLIS)) // default is 5000
+                                          .setReadTimeoutMillis(Integer.getInteger("cassandra.test.driver.read_timeout_ms", DEFAULT_READ_TIMEOUT_MILLIS)); // default is 12000
+
+            logger.info("Timeouts: {} / {}", socketOptions.getConnectTimeoutMillis(), socketOptions.getReadTimeoutMillis());
+
             Cluster.Builder builder = Cluster.builder()
                                              .withoutJMXReporting()
                                              .addContactPoints(nativeAddr)
                                              .withClusterName("Test Cluster")
-                                             .withPort(nativePort);
+                                             .withPort(nativePort)
+                                             .withSocketOptions(socketOptions);
+
+            if (clusterConfigurator != null)
+                clusterConfigurator.accept(builder);
 
             if (version.isBeta())
                 builder = builder.allowBetaProtocolVersion();
@@ -529,16 +545,9 @@ public abstract class CQLTester
 
     public void compact()
     {
-        try
-        {
-            ColumnFamilyStore store = getCurrentColumnFamilyStore();
-            if (store != null)
-                store.forceMajorCompaction();
-        }
-        catch (InterruptedException | ExecutionException e)
-        {
-            throw new RuntimeException(e);
-        }
+         ColumnFamilyStore store = getCurrentColumnFamilyStore();
+         if (store != null)
+             store.forceMajorCompaction();
     }
 
     public void disableCompaction()
@@ -632,9 +641,9 @@ public abstract class CQLTester
         this.usePrepared = USE_PREPARED_VALUES;
     }
 
-    protected void disablePreparedReuseForTest()
+    public static void disablePreparedReuseForTest()
     {
-        this.reusePrepared = false;
+        reusePrepared = false;
     }
 
     protected String createType(String query)

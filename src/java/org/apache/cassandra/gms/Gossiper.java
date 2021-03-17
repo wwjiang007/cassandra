@@ -105,7 +105,9 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         SILENT_SHUTDOWN_STATES.add(VersionedValue.STATUS_BOOTSTRAPPING);
         SILENT_SHUTDOWN_STATES.add(VersionedValue.STATUS_BOOTSTRAPPING_REPLACE);
     }
-
+    private static final List<String> ADMINISTRATIVELY_INACTIVE_STATES = Arrays.asList(VersionedValue.HIBERNATE,
+                                                                                       VersionedValue.REMOVED_TOKEN,
+                                                                                       VersionedValue.STATUS_LEFT);
     private volatile ScheduledFuture<?> scheduledGossipTask;
     private static final ReentrantLock taskLock = new ReentrantLock();
     public final static int intervalInMillis = 1000;
@@ -122,11 +124,11 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     // Maximimum difference between generation value and local time we are willing to accept about a peer
     static final int MAX_GENERATION_DIFFERENCE = 86400 * 365;
-    private long fatClientTimeout;
+    private final long fatClientTimeout;
     private final Random random = new Random();
 
     /* subscribers for interest in EndpointState change */
-    private final List<IEndpointStateChangeSubscriber> subscribers = new CopyOnWriteArrayList<IEndpointStateChangeSubscriber>();
+    private final List<IEndpointStateChangeSubscriber> subscribers = new CopyOnWriteArrayList<>();
 
     /* live member set */
     @VisibleForTesting
@@ -158,38 +160,54 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     private volatile long lastProcessedMessageAt = System.currentTimeMillis();
 
-    //This property and anything that checks it should be removed in 5.0
-    private boolean haveMajorVersion3Nodes = true;
+    /**
+     * This property is initially set to {@code true} which means that we have no information about the other nodes.
+     * Once all nodes are on at least this node version, it becomes {@code false}, which means that we are not
+     * upgrading from the previous version (major, minor).
+     *
+     * This property and anything that checks it should be removed in 5.0
+     */
+    private volatile boolean upgradeInProgressPossible = true;
 
-    final Supplier<ExpiringMemoizingSupplier.ReturnValue<Boolean>> haveMajorVersion3NodesSupplier = () ->
+    final Supplier<ExpiringMemoizingSupplier.ReturnValue<CassandraVersion>> upgradeFromVersionSupplier = () ->
     {
-        //Once there are no prior version nodes we don't need to keep rechecking
-        if (!haveMajorVersion3Nodes)
-            return new ExpiringMemoizingSupplier.Memoized<>(false);
+        // Once there are no prior version nodes we don't need to keep rechecking
+        if (!upgradeInProgressPossible)
+            return new ExpiringMemoizingSupplier.Memoized<>(null);
 
         Iterable<InetAddressAndPort> allHosts = Iterables.concat(Gossiper.instance.getLiveMembers(), Gossiper.instance.getUnreachableMembers());
-        CassandraVersion referenceVersion = null;
 
+        CassandraVersion minVersion = SystemKeyspace.CURRENT_VERSION.familyLowerBound.get();
+        boolean allHostsHaveKnownVersion = true;
         for (InetAddressAndPort host : allHosts)
         {
             CassandraVersion version = getReleaseVersion(host);
 
             //Raced with changes to gossip state, wait until next iteration
             if (version == null)
-                return new ExpiringMemoizingSupplier.NotMemoized(true);
-
-            if (referenceVersion == null)
-                referenceVersion = version;
-
-            if (version.major < 4)
-                return new ExpiringMemoizingSupplier.Memoized<>(true);
+                allHostsHaveKnownVersion = false;
+            else if (version.compareTo(minVersion) < 0)
+                minVersion = version;
         }
 
-        haveMajorVersion3Nodes = false;
-        return new ExpiringMemoizingSupplier.Memoized(false);
+        if (minVersion.compareTo(SystemKeyspace.CURRENT_VERSION.familyLowerBound.get()) < 0)
+            return new ExpiringMemoizingSupplier.Memoized<>(minVersion);
+
+        if (!allHostsHaveKnownVersion)
+            return new ExpiringMemoizingSupplier.NotMemoized<>(minVersion);
+
+        upgradeInProgressPossible = false;
+        return new ExpiringMemoizingSupplier.Memoized<>(null);
     };
 
-    private Supplier<Boolean> haveMajorVersion3NodesMemoized = ExpiringMemoizingSupplier.memoizeWithExpiration(haveMajorVersion3NodesSupplier, 1, TimeUnit.MINUTES);
+    private final Supplier<CassandraVersion> upgradeFromVersionMemoized = ExpiringMemoizingSupplier.memoizeWithExpiration(upgradeFromVersionSupplier, 1, TimeUnit.MINUTES);
+
+    @VisibleForTesting
+    public void expireUpgradeFromVersion()
+    {
+        upgradeInProgressPossible = true;
+        ((ExpiringMemoizingSupplier<CassandraVersion>) upgradeFromVersionMemoized).expire();
+    }
 
     private static final boolean disableThreadValidation = Boolean.getBoolean(Props.DISABLE_THREAD_VALIDATION);
 
@@ -240,7 +258,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                 endpointStateMap.get(FBUtilities.getBroadcastAddressAndPort()).getHeartBeatState().updateHeartBeat();
                 if (logger.isTraceEnabled())
                     logger.trace("My heartbeat is now {}", endpointStateMap.get(FBUtilities.getBroadcastAddressAndPort()).getHeartBeatState().getHeartBeatVersion());
-                final List<GossipDigest> gDigests = new ArrayList<GossipDigest>();
+                final List<GossipDigest> gDigests = new ArrayList<>();
                 Gossiper.instance.makeRandomGossipDigest(gDigests);
 
                 if (gDigests.size() > 0)
@@ -644,7 +662,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             for (GossipDigest gDigest : gDigests)
             {
                 sb.append(gDigest);
-                sb.append(" ");
+                sb.append(' ');
             }
             logger.trace("Gossip Digests are : {}", sb);
         }
@@ -710,16 +728,6 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         assassinateEndpoint(address);
     }
 
-    @VisibleForTesting
-    public void unsafeAnulEndpoint(InetAddressAndPort endpoint)
-    {
-        removeEndpoint(endpoint);
-        justRemovedEndpoints.remove(endpoint);
-        endpointStateMap.remove(endpoint);
-        expireTimeEndpointMap.remove(endpoint);
-        unreachableEndpoints.remove(endpoint);
-    }
-
     /**
      * Do not call this method unless you know what you are doing.
      * It will try extremely hard to obliterate any endpoint from the ring,
@@ -733,7 +741,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         InetAddressAndPort endpoint = InetAddressAndPort.getByName(address);
         runInGossipStageBlocking(() -> {
             EndpointState epState = endpointStateMap.get(endpoint);
-            Collection<Token> tokens = null;
+            Collection<Token> tokens;
             logger.warn("Assassinating {} via gossip", endpoint);
 
             if (epState == null)
@@ -1068,6 +1076,24 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         return UUID.fromString(epStates.get(endpoint).getApplicationState(ApplicationState.HOST_ID).value);
     }
 
+    /**
+     * The value for the provided application state for the provided endpoint as currently known by this Gossip instance.
+     *
+     * @param endpoint the endpoint from which to get the endpoint state.
+     * @param state the endpoint state to get.
+     * @return the value of the application state {@code state} for {@code endpoint}, or {@code null} if either
+     * {@code endpoint} is not known by Gossip or has no value for {@code state}.
+     */
+    public String getApplicationState(InetAddressAndPort endpoint, ApplicationState state)
+    {
+        EndpointState epState = endpointStateMap.get(endpoint);
+        if (epState == null)
+            return null;
+
+        VersionedValue value = epState.getApplicationState(state);
+        return value == null ? null : value.value;
+    }
+
     EndpointState getStateForVersionBiggerThan(InetAddressAndPort forEndpoint, int version)
     {
         EndpointState epState = endpointStateMap.get(forEndpoint);
@@ -1311,6 +1337,23 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         return SILENT_SHUTDOWN_STATES.contains(status);
     }
 
+    public boolean isAdministrativelyInactiveState(EndpointState epState)
+    {
+        String status = getGossipStatus(epState);
+        if (status.isEmpty())
+            return false;
+
+        return ADMINISTRATIVELY_INACTIVE_STATES.contains(status);
+    }
+
+    public boolean isAdministrativelyInactiveState(InetAddressAndPort endpoint)
+    {
+        EndpointState epState = getEndpointStateForEndpoint(endpoint);
+        if (epState == null)
+            return true; // if the end point cannot be found, treat as inactive
+        return isAdministrativelyInactiveState(epState);
+    }
+
     private static String getGossipStatus(EndpointState epState)
     {
         if (epState == null)
@@ -1351,7 +1394,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             }
 
             EndpointState localEpStatePtr = endpointStateMap.get(ep);
-            EndpointState remoteState = entry.getValue();
+            EndpointState remoteState = removeRedundantApplicationStates(entry.getValue());
 
             /*
                 If state does not exist just add it. If it does then add it if the remote generation is greater.
@@ -1409,6 +1452,32 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         }
     }
 
+    // remove duplicated deprecated states
+    private static EndpointState removeRedundantApplicationStates(EndpointState remoteState)
+    {
+        if (remoteState.states().isEmpty())
+            return remoteState;
+
+        Map<ApplicationState, VersionedValue> updatedStates = remoteState.states().stream().filter(entry -> {
+            // Filter out pre-4.0 versions of data for more complete 4.0 versions
+            switch (entry.getKey())
+            {
+                case INTERNAL_IP:
+                    return (null == remoteState.getApplicationState(ApplicationState.INTERNAL_ADDRESS_AND_PORT));
+                case STATUS:
+                    return (null == remoteState.getApplicationState(ApplicationState.STATUS_WITH_PORT));
+                case RPC_ADDRESS:
+                    return (null == remoteState.getApplicationState(ApplicationState.NATIVE_ADDRESS_AND_PORT));
+                default:
+                    return true;
+            }
+        }).collect(Collectors.toMap(Entry::getKey, Entry::getValue));
+
+        EndpointState updated = new EndpointState(remoteState.getHeartBeatState(), updatedStates);
+        if (!remoteState.isAlive()) updated.markDead();
+        return updated;
+    }
+
     private void applyNewStates(InetAddressAndPort addr, EndpointState localState, EndpointState remoteState)
     {
         // don't assert here, since if the node restarts the version will go back to zero
@@ -1423,22 +1492,6 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
 
         Set<Entry<ApplicationState, VersionedValue>> updatedStates = remoteStates.stream().filter(entry -> {
-            // Filter out pre-4.0 versions of data for more complete 4.0 versions
-            switch (entry.getKey())
-            {
-                case INTERNAL_IP:
-                    if (remoteState.getApplicationState(ApplicationState.INTERNAL_ADDRESS_AND_PORT) != null) return false;
-                    break;
-                case STATUS:
-                    if (remoteState.getApplicationState(ApplicationState.STATUS_WITH_PORT) != null) return false;
-                    break;
-                case RPC_ADDRESS:
-                    if (remoteState.getApplicationState(ApplicationState.NATIVE_ADDRESS_AND_PORT) != null) return false;
-                    break;
-                default:
-                    break;
-            }
-
             // filter out the states that are already up to date (has the same or higher version)
             VersionedValue local = localState.getApplicationState(entry.getKey());
             return (local == null || local.version < entry.getValue().version);
@@ -1618,7 +1671,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     public void start(int generationNumber)
     {
-        start(generationNumber, new EnumMap<ApplicationState, VersionedValue>(ApplicationState.class));
+        start(generationNumber, new EnumMap<>(ApplicationState.class));
     }
 
     /**
@@ -1682,7 +1735,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         seedsInShadowRound.clear();
         endpointShadowStateMap.clear();
         // send a completely empty syn
-        List<GossipDigest> gDigests = new ArrayList<GossipDigest>();
+        List<GossipDigest> gDigests = new ArrayList<>();
         GossipDigestSyn digestSynMessage = new GossipDigestSyn(DatabaseDescriptor.getClusterName(),
                 DatabaseDescriptor.getPartitionerName(),
                 gDigests);
@@ -1800,7 +1853,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      */
     public List<String> getSeeds()
     {
-        List<String> seedList = new ArrayList<String>();
+        List<String> seedList = new ArrayList<>();
         for (InetAddressAndPort seed : seeds)
         {
             seedList.add(seed.toString());
@@ -2039,7 +2092,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
 
     public Map<String, List<String>> getReleaseVersionsWithPort()
     {
-        Map<String, List<String>> results = new HashMap<String, List<String>>();
+        Map<String, List<String>> results = new HashMap<>();
         Iterable<InetAddressAndPort> allHosts = Iterables.concat(Gossiper.instance.getLiveMembers(), Gossiper.instance.getUnreachableMembers());
 
         for (InetAddressAndPort host : allHosts)
@@ -2138,9 +2191,27 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         }
     }
 
-    public boolean haveMajorVersion3Nodes()
+    /**
+     * Returns {@code false} only if the information about the version of each node in the cluster is available and
+     * ALL the nodes are on 4.0+ (regardless of the patch version).
+     */
+    public boolean hasMajorVersion3Nodes()
     {
-        return haveMajorVersion3NodesMemoized.get();
+        return isUpgradingFromVersionLowerThan(CassandraVersion.CASSANDRA_4_0) || // this is quite obvious
+               // however if we discovered only nodes at current version so far (in particular only this node),
+               // but still there are nodes with unkonwn version, we also want to report that the cluster may have nodes at 3.x
+               upgradeInProgressPossible && !isUpgradingFromVersionLowerThan(SystemKeyspace.CURRENT_VERSION);
+    }
+
+    /**
+     * Returns {@code true} if there are nodes on version lower than the provided version (only major / minor counts)
+     */
+    public boolean isUpgradingFromVersionLowerThan(CassandraVersion referenceVersion) {
+        CassandraVersion v = upgradeFromVersionMemoized.get();
+        if (SystemKeyspace.NULL_VERSION.equals(v) && scheduledGossipTask == null)
+            return false;
+        else
+            return v != null && v.compareTo(referenceVersion.familyLowerBound.get()) < 0;
     }
 
     private boolean nodesAgreeOnSchema(Collection<InetAddressAndPort> nodes)
