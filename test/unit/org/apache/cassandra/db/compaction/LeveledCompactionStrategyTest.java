@@ -67,6 +67,7 @@ import org.apache.cassandra.service.ActiveRepairService;
 import org.apache.cassandra.utils.FBUtilities;
 
 import static java.util.Collections.singleton;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -698,7 +699,7 @@ public class LeveledCompactionStrategyTest
     public void randomMultiLevelAddTest()
     {
         int iterations = 100;
-        int levelCount = 8;
+        int levelCount = 9;
 
         ColumnFamilyStore cfs = MockSchema.newCFS();
         LeveledManifest lm = new LeveledManifest(cfs, 10, 10, new SizeTieredCompactionStrategyOptions());
@@ -770,6 +771,53 @@ public class LeveledCompactionStrategyTest
         }
         return newLevels;
     }
+    @Test
+    public void testPerLevelSizeBytes() throws IOException
+    {
+        byte [] b = new byte[100];
+        new Random().nextBytes(b);
+        ByteBuffer value = ByteBuffer.wrap(b);
+        int rows = 5;
+        int columns = 5;
+
+        cfs.disableAutoCompaction();
+        for (int r = 0; r < rows; r++)
+        {
+            UpdateBuilder update = UpdateBuilder.create(cfs.metadata(), String.valueOf(r));
+            for (int c = 0; c < columns; c++)
+                update.newRow("column" + c).add("val", value);
+            update.applyUnsafe();
+        }
+        cfs.forceBlockingFlush();
+
+        SSTableReader sstable = cfs.getLiveSSTables().iterator().next();
+        long [] levelSizes = cfs.getPerLevelSizeBytes();
+        for (int i = 0; i < levelSizes.length; i++)
+        {
+            if (i != 0)
+                assertEquals(0, levelSizes[i]);
+            else
+                assertEquals(sstable.onDiskLength(), levelSizes[i]);
+        }
+
+        assertEquals(sstable.onDiskLength(), cfs.getPerLevelSizeBytes()[0]);
+
+        LeveledCompactionStrategy strategy = (LeveledCompactionStrategy) ( cfs.getCompactionStrategyManager()).getStrategies().get(1).get(0);
+        strategy.manifest.remove(sstable);
+        sstable.descriptor.getMetadataSerializer().mutateLevel(sstable.descriptor, 2);
+        sstable.reloadSSTableMetadata();
+        strategy.manifest.addSSTables(Collections.singleton(sstable));
+
+        levelSizes = cfs.getPerLevelSizeBytes();
+        for (int i = 0; i < levelSizes.length; i++)
+        {
+            if (i != 2)
+                assertEquals(0, levelSizes[i]);
+            else
+                assertEquals(sstable.onDiskLength(), levelSizes[i]);
+        }
+
+    }
 
     /**
      * brute-force checks if the new sstables can be added to the correct level in manifest
@@ -822,5 +870,33 @@ public class LeveledCompactionStrategyTest
     {
         assertEquals(l1.size(), l2.size());
         assertEquals(new HashSet<>(l1), new HashSet<>(l2));
+    }
+
+    @Test
+    public void testHighestLevelHasMoreDataThanSupported()
+    {
+        ColumnFamilyStore cfs = MockSchema.newCFS();
+        int fanoutSize = 2; // to generate less sstables
+        LeveledManifest lm = new LeveledManifest(cfs, 1, fanoutSize, new SizeTieredCompactionStrategyOptions());
+
+        // generate data for L7 to trigger compaction
+        int l7 = 7;
+        int maxBytesForL7 = (int) (Math.pow(fanoutSize, l7) * 1024 * 1024);
+        int sstablesSizeForL7 = (int) (maxBytesForL7 * 1.001) + 1;
+        List<SSTableReader> sstablesOnL7 = Collections.singletonList(MockSchema.sstableWithLevel( 1, sstablesSizeForL7, l7, cfs));
+        lm.addSSTables(sstablesOnL7);
+
+        // generate data for L8 to trigger compaction
+        int l8 = 8;
+        int maxBytesForL8 = (int) (Math.pow(fanoutSize, l8) * 1024 * 1024);
+        int sstablesSizeForL8 = (int) (maxBytesForL8 * 1.001) + 1;
+        List<SSTableReader> sstablesOnL8 = Collections.singletonList(MockSchema.sstableWithLevel( 2, sstablesSizeForL8, l8, cfs));
+        lm.addSSTables(sstablesOnL8);
+
+        // compaction for L8 sstables is not supposed to be run because there is no upper level to promote sstables
+        // that's why we expect compaction candidates for L7 only
+        Collection<SSTableReader> compactionCandidates = lm.getCompactionCandidates().sstables;
+        assertThat(compactionCandidates).containsAll(sstablesOnL7);
+        assertThat(compactionCandidates).doesNotContainAnyElementsOf(sstablesOnL8);
     }
 }

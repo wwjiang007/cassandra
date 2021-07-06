@@ -1801,6 +1801,16 @@ public class DatabaseDescriptor
 
     public static long getCompactionLargePartitionWarningThreshold() { return ByteUnit.MEBI_BYTES.toBytes(conf.compaction_large_partition_warning_threshold_mb); }
 
+    public static int getCompactionTombstoneWarningThreshold()
+    {
+        return conf.compaction_tombstone_warning_threshold;
+    }
+
+    public static void setCompactionTombstoneWarningThreshold(int count)
+    {
+        conf.compaction_tombstone_warning_threshold = count;
+    }
+
     public static int getConcurrentValidations()
     {
         return conf.concurrent_validations;
@@ -2950,6 +2960,17 @@ public class DatabaseDescriptor
         conf.enable_transient_replication = enabled;
     }
 
+    public static boolean enableDropCompactStorage()
+    {
+        return conf.enable_drop_compact_storage;
+    }
+
+    @VisibleForTesting
+    public static void setEnableDropCompactStorage(boolean enableDropCompactStorage)
+    {
+        conf.enable_drop_compact_storage = enableDropCompactStorage;
+    }
+
     public static long getUserDefinedFunctionFailTimeout()
     {
         return conf.user_defined_function_fail_timeout;
@@ -3366,5 +3387,13 @@ public class DatabaseDescriptor
         conf.keyspace_count_warn_threshold = value;
     }
 
+    public static int getConsecutiveMessageErrorsThreshold()
+    {
+        return conf.consecutive_message_errors_threshold;
+    }
 
+    public static void setConsecutiveMessageErrorsThreshold(int value)
+    {
+        conf.consecutive_message_errors_threshold = value;
+    }
 }

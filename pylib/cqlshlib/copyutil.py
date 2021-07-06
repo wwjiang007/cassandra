@@ -560,7 +560,7 @@ class ExportWriter(object):
 
         if self.header:
             writer = csv.writer(self.current_dest.output, **self.options.dialect)
-            writer.writerow(self.columns)
+            writer.writerow([ensure_str(c) for c in self.columns])
 
         return True
 
@@ -1723,7 +1723,6 @@ class ExportProcess(ChildProcess):
             writer = csv.writer(output, **self.options.dialect)
 
             for row in rows:
-                print("cqlshlib.copyutil.ExportProcess.write_rows_to_csv(): writing row")
                 writer.writerow(list(map(self.format_value, row, cql_types)))
 
             data = (output.getvalue(), len(rows))

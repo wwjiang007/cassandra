@@ -219,6 +219,7 @@ public class Config
     public volatile int compaction_throughput_mb_per_sec = 16;
     public volatile int compaction_large_partition_warning_threshold_mb = 100;
     public int min_free_space_per_drive_in_mb = 50;
+    public volatile Integer compaction_tombstone_warning_threshold = 100000;
 
     public volatile int concurrent_materialized_view_builders = 1;
     public volatile int reject_repair_compaction_threshold = Integer.MAX_VALUE;
@@ -398,6 +399,8 @@ public class Config
 
     public boolean enable_sasi_indexes = false;
 
+    public volatile boolean enable_drop_compact_storage = false;
+
     /**
      * Optionally disable asynchronous UDF execution.
      * Disabling asynchronous UDF execution also implicitly disables the security-manager!
@@ -561,6 +564,8 @@ public class Config
 
     public volatile int table_count_warn_threshold = 150;
     public volatile int keyspace_count_warn_threshold = 40;
+
+    public volatile int consecutive_message_errors_threshold = 1;
 
     public static Supplier<Config> getOverrideLoadConfig()
     {

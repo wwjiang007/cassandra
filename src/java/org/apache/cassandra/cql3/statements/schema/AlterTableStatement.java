@@ -36,7 +36,7 @@ import org.slf4j.LoggerFactory;
 import org.apache.cassandra.audit.AuditLogContext;
 import org.apache.cassandra.audit.AuditLogEntryType;
 import org.apache.cassandra.auth.Permission;
-
+import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.cql3.CQL3Type;
 import org.apache.cassandra.cql3.CQLStatement;
 import org.apache.cassandra.cql3.ColumnIdentifier;
@@ -71,6 +71,8 @@ import static java.lang.String.join;
 
 import static com.google.common.collect.Iterables.isEmpty;
 import static com.google.common.collect.Iterables.transform;
+
+import static org.apache.cassandra.schema.TableMetadata.Flag;
 
 public abstract class AlterTableStatement extends AlterSchemaStatement
 {
@@ -173,8 +175,10 @@ public abstract class AlterTableStatement extends AlterSchemaStatement
             TableMetadata.Builder tableBuilder = table.unbuild();
             Views.Builder viewsBuilder = keyspace.views.unbuild();
             newColumns.forEach(c -> addColumn(keyspace, table, c, tableBuilder, viewsBuilder));
+            TableMetadata tableMetadata = tableBuilder.build();
+            tableMetadata.validate();
 
-            return keyspace.withSwapped(keyspace.tables.withSwapped(tableBuilder.build()))
+            return keyspace.withSwapped(keyspace.tables.withSwapped(tableMetadata))
                            .withSwapped(viewsBuilder.build());
         }
 
@@ -427,12 +431,19 @@ public abstract class AlterTableStatement extends AlterSchemaStatement
 
         public KeyspaceMetadata apply(KeyspaceMetadata keyspace, TableMetadata table)
         {
+            if (!DatabaseDescriptor.enableDropCompactStorage())
+                throw new InvalidRequestException("DROP COMPACT STORAGE is disabled. Enable in cassandra.yaml to use.");
+
             if (!table.isCompactTable())
                 throw AlterTableStatement.ire("Cannot DROP COMPACT STORAGE on table without COMPACT STORAGE");
 
             validateCanDropCompactStorage();
 
-            return keyspace.withSwapped(keyspace.tables.withSwapped(table.withSwapped(ImmutableSet.of(TableMetadata.Flag.COMPOUND))));
+            Set<Flag> flags = table.isCounter()
+                            ? ImmutableSet.of(Flag.COMPOUND, Flag.COUNTER)
+                            : ImmutableSet.of(Flag.COMPOUND);
+
+            return keyspace.withSwapped(keyspace.tables.withSwapped(table.withSwapped(flags)));
         }
 
         /**

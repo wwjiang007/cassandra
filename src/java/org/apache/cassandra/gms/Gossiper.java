@@ -169,17 +169,43 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
      */
     private volatile boolean upgradeInProgressPossible = true;
 
+    public void clearUnsafe()
+    {
+        unreachableEndpoints.clear();
+        liveEndpoints.clear();
+        justRemovedEndpoints.clear();
+        expireTimeEndpointMap.clear();
+        endpointStateMap.clear();
+        endpointShadowStateMap.clear();
+        seedsInShadowRound.clear();
+    }
+
+    // returns true when the node does not know the existence of other nodes.
+    private static boolean isLoneNode(Map<InetAddressAndPort, EndpointState> epStates)
+    {
+        return epStates.isEmpty() || epStates.keySet().equals(Collections.singleton(FBUtilities.getBroadcastAddressAndPort()));
+    }
+
     final Supplier<ExpiringMemoizingSupplier.ReturnValue<CassandraVersion>> upgradeFromVersionSupplier = () ->
     {
         // Once there are no prior version nodes we don't need to keep rechecking
         if (!upgradeInProgressPossible)
             return new ExpiringMemoizingSupplier.Memoized<>(null);
 
-        Iterable<InetAddressAndPort> allHosts = Iterables.concat(Gossiper.instance.getLiveMembers(), Gossiper.instance.getUnreachableMembers());
+        CassandraVersion minVersion = SystemKeyspace.CURRENT_VERSION;
 
-        CassandraVersion minVersion = SystemKeyspace.CURRENT_VERSION.familyLowerBound.get();
+        // Skip the round if the gossiper has not started yet
+        // Otherwise, upgradeInProgressPossible can be set to false wrongly.
+        // If we don't know any epstate we don't know anything about the cluster.
+        // If we only know about ourselves, we can assume that version is CURRENT_VERSION
+        if (!isEnabled() || isLoneNode(endpointStateMap))
+        {
+            return new ExpiringMemoizingSupplier.NotMemoized<>(minVersion);
+        }
+
+        // Check the release version of all the peers it heard of. Not necessary the peer that it has/had contacted with.
         boolean allHostsHaveKnownVersion = true;
-        for (InetAddressAndPort host : allHosts)
+        for (InetAddressAndPort host : endpointStateMap.keySet())
         {
             CassandraVersion version = getReleaseVersion(host);
 
@@ -190,7 +216,7 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                 minVersion = version;
         }
 
-        if (minVersion.compareTo(SystemKeyspace.CURRENT_VERSION.familyLowerBound.get()) < 0)
+        if (minVersion.compareTo(SystemKeyspace.CURRENT_VERSION) < 0)
             return new ExpiringMemoizingSupplier.Memoized<>(minVersion);
 
         if (!allHostsHaveKnownVersion)
@@ -569,6 +595,8 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             buildSeedsList();
             seeds.remove(endpoint);
             logger.info("removed {} from seeds, updated seeds list = {}", endpoint, seeds);
+            if (seeds.isEmpty())
+                logger.warn("Seeds list is now empty!");
         }
 
         liveEndpoints.remove(endpoint);
@@ -986,6 +1014,14 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
                 {
                     logger.info("FatClient {} has been silent for {}ms, removing from gossip", endpoint, fatClientTimeout);
                     runInGossipStageBlocking(() -> {
+                        if (!isGossipOnlyMember(endpoint))
+                        {
+                            // updating gossip and token metadata are not atomic, but rely on the single threaded gossip stage
+                            // since status checks are done outside the gossip stage, need to confirm the state of the endpoint
+                            // to make sure that the previous read data was correct
+                            logger.info("Race condition marking {} as a FatClient; ignoring", endpoint);
+                            return;
+                        }                        
                         removeEndpoint(endpoint); // will put it in justRemovedEndpoints to respect quarantine delay
                         evictFromMembership(endpoint); // can get rid of the state immediately
                     });
@@ -1394,7 +1430,9 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
             }
 
             EndpointState localEpStatePtr = endpointStateMap.get(ep);
-            EndpointState remoteState = removeRedundantApplicationStates(entry.getValue());
+            EndpointState remoteState = entry.getValue();
+            if (!hasMajorVersion3Nodes())
+                remoteState.removeMajorVersion3LegacyApplicationStates();
 
             /*
                 If state does not exist just add it. If it does then add it if the remote generation is greater.
@@ -1452,32 +1490,6 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         }
     }
 
-    // remove duplicated deprecated states
-    private static EndpointState removeRedundantApplicationStates(EndpointState remoteState)
-    {
-        if (remoteState.states().isEmpty())
-            return remoteState;
-
-        Map<ApplicationState, VersionedValue> updatedStates = remoteState.states().stream().filter(entry -> {
-            // Filter out pre-4.0 versions of data for more complete 4.0 versions
-            switch (entry.getKey())
-            {
-                case INTERNAL_IP:
-                    return (null == remoteState.getApplicationState(ApplicationState.INTERNAL_ADDRESS_AND_PORT));
-                case STATUS:
-                    return (null == remoteState.getApplicationState(ApplicationState.STATUS_WITH_PORT));
-                case RPC_ADDRESS:
-                    return (null == remoteState.getApplicationState(ApplicationState.NATIVE_ADDRESS_AND_PORT));
-                default:
-                    return true;
-            }
-        }).collect(Collectors.toMap(Entry::getKey, Entry::getValue));
-
-        EndpointState updated = new EndpointState(remoteState.getHeartBeatState(), updatedStates);
-        if (!remoteState.isAlive()) updated.markDead();
-        return updated;
-    }
-
     private void applyNewStates(InetAddressAndPort addr, EndpointState localState, EndpointState remoteState)
     {
         // don't assert here, since if the node restarts the version will go back to zero
@@ -1506,8 +1518,20 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         }
         localState.addApplicationStates(updatedStates);
 
+        // get rid of legacy fields once the cluster is not in mixed mode
+        if (!hasMajorVersion3Nodes())
+            localState.removeMajorVersion3LegacyApplicationStates();
+
         for (Entry<ApplicationState, VersionedValue> updatedEntry : updatedStates)
+        {
+            // filters out legacy change notifications
+            // only if local state already indicates that the peer has the new fields
+            if ((ApplicationState.INTERNAL_IP == updatedEntry.getKey() && localState.containsApplicationState(ApplicationState.INTERNAL_ADDRESS_AND_PORT))
+                ||(ApplicationState.STATUS == updatedEntry.getKey() && localState.containsApplicationState(ApplicationState.STATUS_WITH_PORT))
+                || (ApplicationState.RPC_ADDRESS == updatedEntry.getKey() && localState.containsApplicationState(ApplicationState.NATIVE_ADDRESS_AND_PORT)))
+                continue;
             doOnChangeNotifications(addr, updatedEntry.getKey(), updatedEntry.getValue());
+        }
     }
 
     // notify that a local application state is going to change (doesn't get triggered for remote changes)
@@ -1973,12 +1997,27 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
         return (scheduledGossipTask != null) && (!scheduledGossipTask.isCancelled());
     }
 
+    public boolean sufficientForStartupSafetyCheck(Map<InetAddressAndPort, EndpointState> epStateMap)
+    {
+        // it is possible for a previously queued ack to be sent to us when we come back up in shadow
+        EndpointState localState = epStateMap.get(FBUtilities.getBroadcastAddressAndPort());
+        // return false if response doesn't contain state necessary for safety check
+        return localState == null || isDeadState(localState) || localState.containsApplicationState(ApplicationState.HOST_ID);
+    }
+
     protected void maybeFinishShadowRound(InetAddressAndPort respondent, boolean isInShadowRound, Map<InetAddressAndPort, EndpointState> epStateMap)
     {
         if (inShadowRound)
         {
             if (!isInShadowRound)
             {
+                if (!sufficientForStartupSafetyCheck(epStateMap))
+                {
+                    logger.debug("Not exiting shadow round because received ACK with insufficient states {} -> {}",
+                                 FBUtilities.getBroadcastAddressAndPort(), epStateMap.get(FBUtilities.getBroadcastAddressAndPort()));
+                    return;
+                }
+
                 if (!seeds.contains(respondent))
                     logger.warn("Received an ack from {}, who isn't a seed. Ensure your seed list includes a live node. Exiting shadow round",
                                 respondent);
@@ -2199,19 +2238,20 @@ public class Gossiper implements IFailureDetectionEventListener, GossiperMBean
     {
         return isUpgradingFromVersionLowerThan(CassandraVersion.CASSANDRA_4_0) || // this is quite obvious
                // however if we discovered only nodes at current version so far (in particular only this node),
-               // but still there are nodes with unkonwn version, we also want to report that the cluster may have nodes at 3.x
-               upgradeInProgressPossible && !isUpgradingFromVersionLowerThan(SystemKeyspace.CURRENT_VERSION);
+               // but still there are nodes with unknown version, we also want to report that the cluster may have nodes at 3.x
+               upgradeInProgressPossible && !isUpgradingFromVersionLowerThan(SystemKeyspace.CURRENT_VERSION.familyLowerBound.get());
     }
 
     /**
-     * Returns {@code true} if there are nodes on version lower than the provided version (only major / minor counts)
+     * Returns {@code true} if there are nodes on version lower than the provided version
      */
-    public boolean isUpgradingFromVersionLowerThan(CassandraVersion referenceVersion) {
+    public boolean isUpgradingFromVersionLowerThan(CassandraVersion referenceVersion)
+    {
         CassandraVersion v = upgradeFromVersionMemoized.get();
         if (SystemKeyspace.NULL_VERSION.equals(v) && scheduledGossipTask == null)
             return false;
-        else
-            return v != null && v.compareTo(referenceVersion.familyLowerBound.get()) < 0;
+
+        return v != null && v.compareTo(referenceVersion) < 0;
     }
 
     private boolean nodesAgreeOnSchema(Collection<InetAddressAndPort> nodes)

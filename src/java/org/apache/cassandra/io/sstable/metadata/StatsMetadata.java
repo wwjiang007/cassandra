@@ -36,9 +36,11 @@ import org.apache.cassandra.io.ISerializer;
 import org.apache.cassandra.io.sstable.format.Version;
 import org.apache.cassandra.io.util.DataInputPlus;
 import org.apache.cassandra.io.util.DataOutputPlus;
+import org.apache.cassandra.net.MessagingService;
 import org.apache.cassandra.utils.ByteBufferUtil;
 import org.apache.cassandra.utils.EstimatedHistogram;
 import org.apache.cassandra.utils.streamhist.TombstoneHistogram;
+import org.apache.cassandra.utils.UUIDSerializer;
 import org.apache.cassandra.utils.UUIDSerializer;
 
 /**
@@ -67,6 +69,7 @@ public class StatsMetadata extends MetadataComponent
     public final long repairedAt;
     public final long totalColumnsSet;
     public final long totalRows;
+    public final UUID originatingHostId;
     public final UUID pendingRepair;
     public final boolean isTransient;
     // just holds the current encoding stats to avoid allocating - it is not serialized
@@ -90,6 +93,7 @@ public class StatsMetadata extends MetadataComponent
                          long repairedAt,
                          long totalColumnsSet,
                          long totalRows,
+                         UUID originatingHostId,
                          UUID pendingRepair,
                          boolean isTransient)
     {
@@ -111,6 +115,7 @@ public class StatsMetadata extends MetadataComponent
         this.repairedAt = repairedAt;
         this.totalColumnsSet = totalColumnsSet;
         this.totalRows = totalRows;
+        this.originatingHostId = originatingHostId;
         this.pendingRepair = pendingRepair;
         this.isTransient = isTransient;
         this.encodingStats = new EncodingStats(minTimestamp, minLocalDeletionTime, minTTL);
@@ -165,6 +170,7 @@ public class StatsMetadata extends MetadataComponent
                                  repairedAt,
                                  totalColumnsSet,
                                  totalRows,
+                                 originatingHostId,
                                  pendingRepair,
                                  isTransient);
     }
@@ -189,6 +195,7 @@ public class StatsMetadata extends MetadataComponent
                                  newRepairedAt,
                                  totalColumnsSet,
                                  totalRows,
+                                 originatingHostId,
                                  newPendingRepair,
                                  newIsTransient);
     }
@@ -219,6 +226,7 @@ public class StatsMetadata extends MetadataComponent
                        .append(hasLegacyCounterShards, that.hasLegacyCounterShards)
                        .append(totalColumnsSet, that.totalColumnsSet)
                        .append(totalRows, that.totalRows)
+                       .append(originatingHostId, that.originatingHostId)
                        .append(pendingRepair, that.pendingRepair)
                        .build();
     }
@@ -245,6 +253,7 @@ public class StatsMetadata extends MetadataComponent
                        .append(hasLegacyCounterShards)
                        .append(totalColumnsSet)
                        .append(totalRows)
+                       .append(originatingHostId)
                        .append(pendingRepair)
                        .build();
     }
@@ -287,6 +296,13 @@ public class StatsMetadata extends MetadataComponent
             if (version.hasIsTransient())
             {
                 size += TypeSizes.sizeof(component.isTransient);
+            }
+
+            if (version.hasOriginatingHostId())
+            {
+                size += 1; // boolean: is originatingHostId present
+                if (component.originatingHostId != null)
+                    size += UUIDSerializer.serializer.serializedSize(component.originatingHostId, version.correspondingMessagingVersion());
             }
 
             return size;
@@ -339,6 +355,19 @@ public class StatsMetadata extends MetadataComponent
             if (version.hasIsTransient())
             {
                 out.writeBoolean(component.isTransient);
+            }
+
+            if (version.hasOriginatingHostId())
+            {
+                if (component.originatingHostId != null)
+                {
+                    out.writeByte(1);
+                    UUIDSerializer.serializer.serialize(component.originatingHostId, out, 0);
+                }
+                else
+                {
+                    out.writeByte(0);
+                }
             }
         }
 
@@ -420,6 +449,10 @@ public class StatsMetadata extends MetadataComponent
 
             boolean isTransient = version.hasIsTransient() && in.readBoolean();
 
+            UUID originatingHostId = null;
+            if (version.hasOriginatingHostId() && in.readByte() != 0)
+                originatingHostId = UUIDSerializer.serializer.deserialize(in, 0);
+
             return new StatsMetadata(partitionSizes,
                                      columnCounts,
                                      commitLogIntervals,
@@ -438,6 +471,7 @@ public class StatsMetadata extends MetadataComponent
                                      repairedAt,
                                      totalColumnsSet,
                                      totalRows,
+                                     originatingHostId,
                                      pendingRepair,
                                      isTransient);
         }

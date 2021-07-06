@@ -596,7 +596,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             throw new RuntimeException(e);
         }
 
-        UUID localHostId = SystemKeyspace.getLocalHostId();
+        UUID localHostId = SystemKeyspace.getOrInitializeLocalHostId();
 
         if (isReplacingSameAddress())
         {
@@ -636,7 +636,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return bootstrapTokens;
     }
 
-    private synchronized void checkForEndpointCollision(UUID localHostId, Set<InetAddressAndPort> peers) throws ConfigurationException
+    public synchronized void checkForEndpointCollision(UUID localHostId, Set<InetAddressAndPort> peers) throws ConfigurationException
     {
         if (Boolean.getBoolean("cassandra.allow_unsafe_join"))
         {
@@ -904,7 +904,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
 
             MessagingService.instance().listen();
 
-            UUID localHostId = SystemKeyspace.getLocalHostId();
+            UUID localHostId = SystemKeyspace.getOrInitializeLocalHostId();
 
             if (replacing)
             {
@@ -927,6 +927,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                     appStates.put(ApplicationState.STATUS_WITH_PORT, valueFactory.hibernate(true));
                     appStates.put(ApplicationState.STATUS, valueFactory.hibernate(true));
                 }
+                MigrationCoordinator.instance.removeAndIgnoreEndpoint(DatabaseDescriptor.getReplaceAddress());
             }
             else
             {
@@ -1000,12 +1001,15 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             return;
 
         logger.warn(String.format("There are nodes in the cluster with a different schema version than us we did not merged schemas from, " +
-                                  "our version : (%s), outstanding versions -> endpoints : %s",
+                                  "our version : (%s), outstanding versions -> endpoints : %s. Use -Dcassandra.skip_schema_check=true " +
+                                  "to ignore this, -Dcassandra.skip_schema_check_for_endpoints=<ep1[,epN]> to skip specific endpoints," +
+                                  "or -Dcassandra.skip_schema_check_for_versions=<ver1[,verN]> to skip specific schema versions",
                                   Schema.instance.getVersion(),
                                   MigrationCoordinator.instance.outstandingVersions()));
 
         if (REQUIRE_SCHEMAS)
-            throw new RuntimeException("Didn't receive schemas for all known versions within the timeout");
+            throw new RuntimeException("Didn't receive schemas for all known versions within the timeout. " +
+                                       "Use -Dcassandra.skip_schema_check=true to skip this check.");
     }
 
     private void joinTokenRing(long schemaTimeoutMillis) throws ConfigurationException
@@ -1744,7 +1748,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             SystemKeyspace.removeEndpoint(DatabaseDescriptor.getReplaceAddress());
         }
         if (!Gossiper.instance.seenAnySeed())
-            throw new IllegalStateException("Unable to contact any seeds!");
+            throw new IllegalStateException("Unable to contact any seeds: " + Gossiper.instance.getSeeds());
 
         if (Boolean.getBoolean("cassandra.reset_bootstrap_progress"))
         {
@@ -2374,6 +2378,11 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                         break;
                 }
             }
+            else
+            {
+                logger.debug("Ignoring application state {} from {} because it is not a member in token metadata",
+                             state, endpoint);
+            }
         }
     }
 
@@ -2695,7 +2704,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             }
             else
             {
-                logger.info("Nodes () and {} have the same token {}.  Ignoring {}", endpoint, currentOwner, token, endpoint);
+                logger.info("Nodes {} and {} have the same token {}.  Ignoring {}", endpoint, currentOwner, token, endpoint);
             }
         }
 
@@ -2951,6 +2960,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
     private void removeEndpoint(InetAddressAndPort endpoint)
     {
         Gossiper.runInGossipStageBlocking(() -> Gossiper.instance.removeEndpoint(endpoint));
+        MigrationCoordinator.instance.removeAndIgnoreEndpoint(endpoint);
         SystemKeyspace.removeEndpoint(endpoint);
     }
 
@@ -3248,13 +3258,30 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
         return changedRanges.build();
     }
 
+
     public void onJoin(InetAddressAndPort endpoint, EndpointState epState)
     {
+        // Explicitly process STATUS or STATUS_WITH_PORT before the other
+        // application states to maintain pre-4.0 semantics with the order
+        // they are processed.  Otherwise the endpoint will not be added
+        // to TokenMetadata so non-STATUS* appstates will be ignored.
+        ApplicationState statusState = ApplicationState.STATUS_WITH_PORT;
+        VersionedValue statusValue;
+        statusValue = epState.getApplicationState(statusState);
+        if (statusValue == null)
+        {
+            statusState = ApplicationState.STATUS;
+            statusValue = epState.getApplicationState(statusState);
+        }
+        if (statusValue != null)
+            onChange(endpoint, statusState, statusValue);
+
         for (Map.Entry<ApplicationState, VersionedValue> entry : epState.states())
         {
+            if (entry.getKey() == ApplicationState.STATUS_WITH_PORT || entry.getKey() == ApplicationState.STATUS)
+                continue;
             onChange(endpoint, entry.getKey(), entry.getValue());
         }
-        MigrationCoordinator.instance.reportEndpointVersion(endpoint, epState);
     }
 
     public void onAlive(InetAddressAndPort endpoint, EndpointState state)
@@ -4429,6 +4456,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
                     {
                         logger.info("failed to shutdown message service: {}", ioe);
                     }
+
                     Stage.shutdownNow();
                     SystemKeyspace.setBootstrapState(SystemKeyspace.BootstrapState.DECOMMISSIONED);
                     setMode(Mode.DECOMMISSIONED, true);
@@ -4967,7 +4995,7 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             // wait for miscellaneous tasks like sstable and commitlog segment deletion
             ScheduledExecutors.nonPeriodicTasks.shutdown();
             if (!ScheduledExecutors.nonPeriodicTasks.awaitTermination(1, MINUTES))
-                logger.warn("Failed to wait for non periodic tasks to shutdown");
+                logger.warn("Unable to terminate non-periodic tasks within 1 minute.");
 
             ColumnFamilyStore.shutdownPostFlushExecutor();
             setMode(Mode.DRAINED, !isFinalShutdown);
@@ -5948,5 +5976,18 @@ public class StorageService extends NotificationBroadcasterSupport implements IE
             throw new IllegalStateException("Keyspace count warn threshold should be positive, not "+value);
         logger.info("Changing keyspace count warn threshold from {} to {}", getKeyspaceCountWarnThreshold(), value);
         DatabaseDescriptor.setKeyspaceCountWarnThreshold(value);
+    }
+
+    public void setCompactionTombstoneWarningThreshold(int count)
+    {
+        if (count < 0)
+            throw new IllegalStateException("compaction tombstone warning threshold needs to be >= 0, not "+count);
+        logger.info("Setting compaction_tombstone_warning_threshold to {}", count);
+        DatabaseDescriptor.setCompactionTombstoneWarningThreshold(count);
+    }
+
+    public int getCompactionTombstoneWarningThreshold()
+    {
+        return DatabaseDescriptor.getCompactionTombstoneWarningThreshold();
     }
 }

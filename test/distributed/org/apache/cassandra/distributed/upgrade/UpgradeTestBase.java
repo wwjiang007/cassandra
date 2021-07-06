@@ -21,10 +21,12 @@ package org.apache.cassandra.distributed.upgrade;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
 
+import com.google.common.base.Preconditions;
 import org.junit.After;
 import org.junit.BeforeClass;
 
@@ -41,6 +43,7 @@ import org.apache.cassandra.utils.ByteBufferUtil;
 import static org.apache.cassandra.distributed.shared.Versions.Major;
 import static org.apache.cassandra.distributed.shared.Versions.Version;
 import static org.apache.cassandra.distributed.shared.Versions.find;
+import static org.apache.commons.lang3.ArrayUtils.isNotEmpty;
 
 public class UpgradeTestBase extends DistributedTestBase
 {
@@ -80,6 +83,7 @@ public class UpgradeTestBase extends DistributedTestBase
 
         public TestVersions(Version initial, Version ... upgrade)
         {
+            Preconditions.checkArgument(isNotEmpty(upgrade), "TestVersions must be constructed with one or more target upgrade versions.");
             this.initial = initial;
             this.upgrade = upgrade;
         }
@@ -91,9 +95,10 @@ public class UpgradeTestBase extends DistributedTestBase
         private final List<TestVersions> upgrade = new ArrayList<>();
         private int nodeCount = 3;
         private RunOnCluster setup;
+        private RunOnClusterAndNode runBeforeNodeRestart;
         private RunOnClusterAndNode runAfterNodeUpgrade;
         private RunOnCluster runAfterClusterUpgrade;
-        private final Set<Integer> nodesToUpgrade = new HashSet<>();
+        private final Set<Integer> nodesToUpgrade = new LinkedHashSet<>();
         private Consumer<IInstanceConfig> configConsumer;
 
         public TestCase()
@@ -133,6 +138,12 @@ public class UpgradeTestBase extends DistributedTestBase
             return this;
         }
 
+        public TestCase runBeforeNodeRestart(RunOnClusterAndNode runBeforeNodeRestart)
+        {
+            this.runBeforeNodeRestart = runBeforeNodeRestart;
+            return this;
+        }
+
         public TestCase runAfterNodeUpgrade(RunOnClusterAndNode runAfterNodeUpgrade)
         {
             this.runAfterNodeUpgrade = runAfterNodeUpgrade;
@@ -159,6 +170,8 @@ public class UpgradeTestBase extends DistributedTestBase
                 throw new AssertionError();
             if (runAfterClusterUpgrade == null && runAfterNodeUpgrade == null)
                 throw new AssertionError();
+            if (runBeforeNodeRestart == null)
+                runBeforeNodeRestart = (c, n) -> {};
             if (runAfterClusterUpgrade == null)
                 runAfterClusterUpgrade = (c) -> {};
             if (runAfterNodeUpgrade == null)
@@ -179,6 +192,7 @@ public class UpgradeTestBase extends DistributedTestBase
                         {
                             cluster.get(n).shutdown().get();
                             cluster.get(n).setVersion(version);
+                            runBeforeNodeRestart.run(cluster, n);
                             cluster.get(n).startup();
                             runAfterNodeUpgrade.run(cluster, n);
                         }
@@ -186,10 +200,20 @@ public class UpgradeTestBase extends DistributedTestBase
                         runAfterClusterUpgrade.run(cluster);
                     }
                 }
-
             }
         }
         public TestCase nodesToUpgrade(int ... nodes)
+        {
+            Set<Integer> set = new HashSet<>(nodes.length);
+            for (int n : nodes)
+            {
+                set.add(n);
+            }
+            nodesToUpgrade.addAll(set);
+            return this;
+        }
+
+        public TestCase nodesToUpgradeOrdered(int ... nodes)
         {
             for (int n : nodes)
             {
@@ -197,7 +221,7 @@ public class UpgradeTestBase extends DistributedTestBase
             }
             return this;
         }
-    }
+     }
 
     protected TestCase allUpgrades(int nodes, int... toUpgrade)
     {

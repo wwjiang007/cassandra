@@ -19,7 +19,6 @@ package org.apache.cassandra.io.sstable.metadata;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
@@ -27,21 +26,20 @@ import java.util.Map;
 import java.util.UUID;
 
 import com.google.common.base.Preconditions;
-import com.google.common.collect.Maps;
 
 import com.clearspring.analytics.stream.cardinality.HyperLogLogPlus;
 import com.clearspring.analytics.stream.cardinality.ICardinality;
 import org.apache.cassandra.db.*;
 import org.apache.cassandra.db.commitlog.CommitLogPosition;
 import org.apache.cassandra.db.commitlog.IntervalSet;
-import org.apache.cassandra.db.marshal.AbstractType;
 import org.apache.cassandra.db.partitions.PartitionStatisticsCollector;
 import org.apache.cassandra.db.rows.Cell;
 import org.apache.cassandra.io.sstable.SSTable;
 import org.apache.cassandra.io.sstable.format.SSTableReader;
 import org.apache.cassandra.service.ActiveRepairService;
-import org.apache.cassandra.utils.ByteBufferUtil;
+import org.apache.cassandra.service.StorageService;
 import org.apache.cassandra.utils.EstimatedHistogram;
+import org.apache.cassandra.utils.FBUtilities;
 import org.apache.cassandra.utils.MurmurHash;
 import org.apache.cassandra.utils.streamhist.TombstoneHistogram;
 import org.apache.cassandra.utils.streamhist.StreamingTombstoneHistogramBuilder;
@@ -89,6 +87,7 @@ public class MetadataCollector implements PartitionStatisticsCollector
                                  -1,
                                  -1,
                                  null,
+                                 null,
                                  false);
     }
 
@@ -107,6 +106,7 @@ public class MetadataCollector implements PartitionStatisticsCollector
     protected boolean hasLegacyCounterShards = false;
     protected long totalColumnsSet;
     protected long totalRows;
+    public int totalTombstones;
 
     /**
      * Default cardinality estimation method is to use HyperLogLog++.
@@ -116,11 +116,19 @@ public class MetadataCollector implements PartitionStatisticsCollector
      */
     protected ICardinality cardinality = new HyperLogLogPlus(13, 25);
     private final ClusteringComparator comparator;
+    private final int nowInSec = FBUtilities.nowInSeconds();
+
+    private final UUID originatingHostId;
 
     public MetadataCollector(ClusteringComparator comparator)
     {
-        this.comparator = comparator;
+        this(comparator, StorageService.instance.getLocalHostUUID());
+    }
 
+    public MetadataCollector(ClusteringComparator comparator, UUID originatingHostId)
+    {
+        this.comparator = comparator;
+        this.originatingHostId = originatingHostId;
     }
 
     public MetadataCollector(Iterable<SSTableReader> sstables, ClusteringComparator comparator, int level)
@@ -128,11 +136,14 @@ public class MetadataCollector implements PartitionStatisticsCollector
         this(comparator);
 
         IntervalSet.Builder<CommitLogPosition> intervals = new IntervalSet.Builder<>();
-        for (SSTableReader sstable : sstables)
+        if (originatingHostId != null)
         {
-            intervals.addAll(sstable.getSSTableMetadata().commitLogIntervals);
+            for (SSTableReader sstable : sstables)
+            {
+                if (originatingHostId.equals(sstable.getSSTableMetadata().originatingHostId))
+                    intervals.addAll(sstable.getSSTableMetadata().commitLogIntervals);
+            }
         }
-
         commitLogIntervals(intervals.build());
         sstableLevel(level);
     }
@@ -141,6 +152,7 @@ public class MetadataCollector implements PartitionStatisticsCollector
     {
         long hashed = MurmurHash.hash2_64(key, key.position(), key.remaining(), 0);
         cardinality.offerHashed(hashed);
+        totalTombstones = 0;
         return this;
     }
 
@@ -174,6 +186,8 @@ public class MetadataCollector implements PartitionStatisticsCollector
         updateTimestamp(newInfo.timestamp());
         updateTTL(newInfo.ttl());
         updateLocalDeletionTime(newInfo.localExpirationTime());
+        if (!newInfo.isLive(nowInSec))
+            updateTombstoneCount();
     }
 
     public void update(Cell<?> cell)
@@ -181,6 +195,8 @@ public class MetadataCollector implements PartitionStatisticsCollector
         updateTimestamp(cell.timestamp());
         updateTTL(cell.ttl());
         updateLocalDeletionTime(cell.localDeletionTime());
+        if (!cell.isLive(nowInSec))
+            updateTombstoneCount();
     }
 
     public void update(DeletionTime dt)
@@ -189,6 +205,7 @@ public class MetadataCollector implements PartitionStatisticsCollector
         {
             updateTimestamp(dt.markedForDeleteAt());
             updateLocalDeletionTime(dt.localDeletionTime());
+            updateTombstoneCount();
         }
     }
 
@@ -208,6 +225,11 @@ public class MetadataCollector implements PartitionStatisticsCollector
         localDeletionTimeTracker.update(newLocalDeletionTime);
         if (newLocalDeletionTime != Cell.NO_DELETION_TIME)
             estimatedTombstoneDropTime.update(newLocalDeletionTime);
+    }
+
+    private void updateTombstoneCount()
+    {
+        ++totalTombstones;
     }
 
     private void updateTTL(int newTTL)
@@ -265,6 +287,7 @@ public class MetadataCollector implements PartitionStatisticsCollector
                                                              repairedAt,
                                                              totalColumnsSet,
                                                              totalRows,
+                                                             originatingHostId,
                                                              pendingRepair,
                                                              isTransient));
         components.put(MetadataType.COMPACTION, new CompactionMetadata(cardinality));
